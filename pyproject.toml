@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rasmio-mcp"
+version = "0.1.0"
+description = "Free MCP server for Iranian company registry data from rasmio.com (no API key required)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["mcp", "rasmio", "iran", "companies", "registry", "fastmcp"]
+dependencies = [
+    "mcp>=1.2.0,<2",
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+]
+
+[project.scripts]
+rasmio-mcp = "rasmio_mcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["rasmio_mcp*"]
