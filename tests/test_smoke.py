@@ -39,6 +39,7 @@ from rasmio_mcp.client import (  # noqa: E402
     normalize_national_id,
     normalize_query,
 )
+from rasmio_mcp.rkk_client import RkkClient, RkkError  # noqa: E402
 from bs4 import BeautifulSoup  # noqa: E402
 from rasmio_mcp import client as rc  # noqa: E402
 
@@ -181,6 +182,31 @@ finally:
     client.close()
 
 # ---------------------------------------------------------------------------
+print("\n[3.5/4] live rrk.ir official-gazette checks (open data, no quota)")
+# ---------------------------------------------------------------------------
+rkk = RkkClient()
+try:
+    t0 = time.time()
+    gaz = rkk.search_notices("دیجی کالا", max_rows=10)
+    print(f"  (rrk search took {time.time() - t0:.1f}s)")
+    check("rrk: notices returned", gaz["count"] > 0, str(gaz.get("count")))
+    n0 = gaz["notices"][0]
+    check("rrk: notice has title_text", bool(n0.get("title_text")))
+    check("rrk: notice has national_id", bool(n0.get("national_id")))
+    check("rrk: notice has newspaper_date", bool(n0.get("newspaper_date")))
+    check("rrk: notice has detail_url",
+          str(n0.get("detail_url", "")).startswith("https://rrk.ir/"))
+    check("rrk: notice has notice_code", bool(n0.get("notice_code")))
+
+    gaz2 = rkk.search_notices(DIGIKALA_ID, max_rows=10)
+    check("rrk: national-ID search returns notices", gaz2["count"] > 0)
+except RkkError as exc:
+    print(f"  (rrk.ir unavailable: {exc.message[:120]})")
+    check("rrk: live search", False, exc.message[:200])
+finally:
+    rkk.close()
+
+# ---------------------------------------------------------------------------
 print("\n[4/4] MCP stdio handshake + tool calls")
 # ---------------------------------------------------------------------------
 MESSAGES = [
@@ -193,6 +219,8 @@ MESSAGES = [
         "name": "search_rasmio", "arguments": {"query": "دیجی کالا"}}},
     {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
         "name": "get_company_info", "arguments": {"national_id": DIGIKALA_ID}}},
+    {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+        "name": "search_official_gazette", "arguments": {"query": DIGIKALA_ID, "max_rows": 5}}},
 ]
 
 env = dict(os.environ)
@@ -224,7 +252,7 @@ def _reader() -> None:
 threading.Thread(target=_reader, daemon=True).start()
 
 responses: dict[int | str, dict] = {}
-deadline = time.time() + 180
+deadline = time.time() + 240
 while time.time() < deadline and len(responses) < len(MESSAGES) - 1:  # -1: notification
     try:
         line = lines_q.get(timeout=max(0.1, deadline - time.time()))
@@ -256,8 +284,9 @@ check("stdio: server name = rasmio",
       responses.get(1, {}).get("result", {}).get("serverInfo", {}).get("name") == "rasmio")
 tools = responses.get(2, {}).get("result", {}).get("tools", [])
 tool_names = sorted(t["name"] for t in tools)
-check("stdio: tools/list has 4 tools",
-      tool_names == ["get_company_gazettes", "get_company_info", "get_company_members", "search_rasmio"],
+check("stdio: tools/list has 5 tools",
+      tool_names == ["get_company_gazettes", "get_company_info", "get_company_members",
+                     "search_official_gazette", "search_rasmio"],
       str(tool_names))
 
 call3 = responses.get(3, {})
@@ -280,6 +309,17 @@ elif result4.get("isError"):
     check("stdio: graceful quota error via MCP", "5 company-page views" in text4, text4[:300])
 else:
     check("stdio: company info call answered", False, json.dumps(call4, ensure_ascii=False)[:200])
+
+call5 = responses.get(5, {})
+result5 = call5.get("result") or {}
+if result5 and not result5.get("isError"):
+    text5 = "".join(c.get("text", "") for c in result5.get("content", []))
+    check("stdio: gazette search call ok", "rrk.ir" in text5 and "notices" in text5, text5[:200])
+elif result5.get("isError"):
+    text5 = "".join(c.get("text", "") for c in result5.get("content", []))
+    check("stdio: gazette search call ok", False, text5[:300])
+else:
+    check("stdio: gazette search call answered", False, json.dumps(call5, ensure_ascii=False)[:200])
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

@@ -21,10 +21,12 @@ from .client import (
     normalize_national_id,
     normalize_query,
 )
+from .rkk_client import RkkClient, RkkError
 
 mcp = FastMCP("rasmio")
 
 _client: RasmioClient | None = None
+_rkk_client: RkkClient | None = None
 
 
 def _get_client() -> RasmioClient:
@@ -32,6 +34,13 @@ def _get_client() -> RasmioClient:
     if _client is None:
         _client = RasmioClient()
     return _client
+
+
+def _get_rkk_client() -> RkkClient:
+    global _rkk_client
+    if _rkk_client is None:
+        _rkk_client = RkkClient()
+    return _rkk_client
 
 
 @mcp.tool()
@@ -106,6 +115,30 @@ def get_company_gazettes(national_id: str) -> dict:
         changes.
     """
     return _get_client().get_company_gazettes(national_id)
+
+
+@mcp.tool()
+def search_official_gazette(query: str, max_rows: int = 20) -> dict:
+    """Search official-gazette notices (آگهی‌های روزنامه رسمی) directly on rrk.ir.
+
+    Queries the gazette's own open-data search (روزنامه رسمی کشور) — the
+    primary source rasmio.com aggregates — with no page-view quota.
+
+    Args:
+        query: Free text, a company name, or an 10/11-digit national ID
+            (شناسه ملی). Persian digits and Arabic ي/ك are normalized.
+        max_rows: Max notices to return (1-100, default 20).
+
+    Returns:
+        {"notices": [...]} — each notice has title_text, notice_type,
+        national_id, letter_date (تاریخ نامه), newspaper_date (تاریخ چاپ),
+        newspaper_no, tracking_no, status, city, notice_code and detail_url
+        on rrk.ir.
+    """
+    query = normalize_query(query)
+    if not query:
+        raise ValueError("query must not be empty")
+    return _get_rkk_client().search_notices(query, max_rows=max_rows)
 
 
 def main() -> None:

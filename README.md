@@ -17,6 +17,7 @@ web search API and parses the public server-rendered company pages.
 | `get_company_info(national_id)` | Full public profile: title, شماره ثبت, کد اقتصادی, نوع شرکت, وضعیت, تاریخ تاسیس, سرمایه ثبتی (display + rial integer), موضوع فعالیت, نشانی, کد پستی. |
 | `get_company_members(national_id)` | Board members, CEO and auditors with their roles (مدیرعامل, رئیس هیئت مدیره, نایب رئیس, عضو, بازرس اصلی/علی‌البدل) and profile links. |
 | `get_company_gazettes(national_id)` | Recent official-gazette notices with title, تاریخ چاپ, تاریخ نامه ثبت, distribution type, body text and newspaper URL. |
+| `search_official_gazette(query, max_rows=20)` | Search the **official gazette directly on rrk.ir** (روزنامه رسمی کشور, open data — the source rasmio aggregates, no quota): notice title/text, national ID, dates (تاریخ نامه/چاپ), newspaper no, tracking no, status, city, notice code and rrk.ir detail URL. |
 
 Persian digits (۰-۹) and Arabic characters (ي/ك) in queries and national IDs are
 normalized automatically.
@@ -66,6 +67,8 @@ Or, if installed in a persistent environment, use the console script:
 | `RASMIO_COMPANY_TTL` | `21600` (6 h) | Seconds a parsed company page stays cached. One page fetch serves all three company tools. |
 | `RASMIO_MIN_INTERVAL` | `4` | Minimum seconds between company-page fetches (politeness pacing). |
 | `RASMIO_THROTTLE_RETRIES` | `1` | Automatic retries (with backoff) when rasmio serves its quota page. `0` disables. |
+| `RKK_TIMEOUT` | `45` | HTTP timeout in seconds for rrk.ir requests. |
+| `RKK_INTERMEDIATE_PEM` | *(auto)* | Path to a PEM of the Certum intermediate that signs rrk.ir's leaf certificate. |
 
 ## The rasmio.com free quota (important)
 
@@ -119,25 +122,37 @@ Four tiers, all green regardless of quota state:
    `tests/fixtures/company_page_digikala.html`, a real captured rasmio.com
    company page (Digikala): all registration fields, 9 merged members/auditors,
    3 gazette notices.
-3. **Live checks** — the search API always runs live; the company-page tools
-   run live when the anonymous quota has room, and otherwise verify the clean
-   `RateLimitedError` path instead.
+3. **Live checks** — the rasmio search API always runs live; the company-page
+   tools run live when the anonymous quota has room, and otherwise verify the
+   clean `RateLimitedError` path instead. rrk.ir's official-gazette search
+   runs live in both modes (free text + national ID).
 4. **MCP stdio session** — spawns the real server process and performs
-   initialize → tools/list → tools/call like an MCP host, keeping stdin open
-   while responses arrive.
+   initialize → tools/list → tools/call (including `search_official_gazette`)
+   like an MCP host, keeping stdin open while responses arrive.
 
 ## How it works / limitations
 
-- **Sources:** the free JSON search endpoint (`/api/search/search/all`) and the
-  SSR company page (`/company/{national_id}/`). Parsing is label-driven
-  (visible Persian labels, `aria-label` attributes), not CSS-class driven, so
-  it survives styling changes.
-- **Quota page detection:** a company page whose redirect lands on
+- **Sources:** rasmio.com's free JSON search endpoint (`/api/search/search/all`)
+  and SSR company page (`/company/{national_id}/`), plus rrk.ir's APEX
+  open-data search (page 199 «داده باز»). Parsing is label-driven (visible
+  Persian labels, `aria-label` attributes), not CSS-class driven, so it
+  survives styling changes.
+- **rrk.ir (official gazette):** the portal is an Oracle APEX app whose
+  certificate chain is served incomplete; the client fetches the missing
+  Certum intermediate automatically (or set `RKK_INTERMEDIATE_PEM`). The
+  replicated flow: search hub → checksummed open-data link → APEX page submit
+  with the full page-items protection context (per-item `ck` checksums,
+  `protected` list, `salt`) → Interactive Grid data request for the notices
+  region (`AGAHI_MATN`). If rrk.ir's layout changes, `RkkError` explains where.
+- **Quota page detection:** a rasmio company page whose redirect lands on
   `/company/{id}/direct/` (or that lacks any registration data) is treated as
   the anonymous-quota shell, not as an empty result.
 - **Shareholders:** granular shareholder data is not published on the free
-  page; shareholders appear only inside gazette notice texts.
-- **Gazettes:** the page embeds the most recent notices (3 for Digikala at
-  capture time); the full paginated archive requires a paid rasmio subscription.
-- Data belongs to rasmio.com / روزنامه رسمی; this client only reads public
-  pages at human-like pace and expects you to respect their terms of service.
+  rasmio page; shareholders appear only inside gazette notice texts — which is
+  exactly what `search_official_gazette` exposes.
+- **Gazettes:** `get_company_gazettes` shows the recent notices embedded on
+  the rasmio page; `search_official_gazette` reaches the full open-data index
+  on rrk.ir (up to 100 rows per call).
+- Data belongs to rasmio.com / روزنامه رسمی کشور; this client only reads
+  public pages at human-like pace and expects you to respect their terms of
+  service.
